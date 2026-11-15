@@ -1,0 +1,8 @@
+-- 裁决证据对账与修复功能（由 SQLAlchemy metadata 自动建表）。
+-- 新增表 reconciliation_tasks：
+--   id 主键；state 取 queued/running/done/failed，与裁决任务同一组状态值；
+--   report JSON 记录对账明细（逐项状态、修复动作、隔离文件、无所属裁决文件）；
+--   error 记录失败原因；created_by 记录发起人；created_at/started_at/finished_at 为 UTC ISO 时间。
+-- 证据文件仍位于产物卷 /artifacts/trial-verdict-<decision_id>.json，
+-- 损坏原件移动到 /artifacts/quarantine/ 保留，不覆盖任何已留证文件。
+-- 仅新增表，不改动 decisions/events/experiments 既有数据与已发布裁决结论。

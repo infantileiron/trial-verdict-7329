@@ -1,14 +1,16 @@
-import os,json
-from datetime import timezone
+import os
+from datetime import timezone,datetime
 import redis
 from fastapi import APIRouter,Depends,HTTPException,Response
 from sqlalchemy.exc import IntegrityError
 from src.config.database import db
-from src.models.entities import User,Experiment,Event,Decision,Audit
-from src.schemas.business import Login,ExperimentInput,EventInput,RunInput,RationaleInput,PublishInput
+from src.models.entities import User,Experiment,Event,Decision,ReconciliationTask,Audit
+from src.schemas.business import Login,ExperimentInput,EventInput,RunInput,RationaleInput,PublishInput,ReconciliationInput
 from src.middlewares.auth import current,editor,admin
 from src.utils.security import verify,token
 from src.services.business import audit,dump,utc
+from src.services import evidence
+from src.services.evidence import EvidenceError
 from src.controllers.business import experiment,decision,validate_event,snapshot,publish
 router=APIRouter()
 @router.post('/auth/login')
@@ -72,6 +74,33 @@ def release(i:int,data:PublishInput,u=Depends(admin),s=Depends(db)):
 def export(i:int,u=Depends(current),s=Depends(db)):
  r=decision(s,i)
  if r.state!='done':raise HTTPException(409,'尚无成功结果')
- return Response(json.dumps(dump(r),ensure_ascii=False,indent=2),media_type='application/json',headers={'Content-Disposition':f'attachment; filename="trial-verdict-{i}.json"'})
+ try:
+  data,digest=evidence.read_verified(r)
+ except EvidenceError as e:
+  raise HTTPException(409,f'证据核验未通过，已拒绝下载：{e}。请发起证据对账修复后再下载')
+ # 直接回传留存文件原字节，不重新拼装；附带文件校验和供下载方复核
+ return Response(content=data,media_type='application/json',headers={
+  'Content-Disposition':f'attachment; filename="trial-verdict-{i}.json"',
+  'X-Evidence-SHA256':digest,
+  'X-Evidence-Version':(r.result or {}).get('version','')})
+@router.post('/reconciliations')
+def create_reconciliation(data:ReconciliationInput,u=Depends(editor),s=Depends(db)):
+ active=s.query(ReconciliationTask).filter(ReconciliationTask.state.in_(['queued','running'])).count()
+ if active:raise HTTPException(409,'已有证据对账任务在处理中，请等待其完成后再发起')
+ if not s.query(Decision).filter_by(state='done').first():raise HTTPException(409,'暂无计算完成的裁决，没有可对账的证据')
+ task=ReconciliationTask(state='queued',created_by=u.email,created_at=datetime.now(timezone.utc).isoformat())
+ s.add(task);s.commit()
+ try:redis.Redis.from_url(os.environ['REDIS_URL']).rpush('trial:reconciliations',task.id)
+ except redis.RedisError:
+  task.state='failed';task.error='队列暂不可用，恢复后重新发起';s.commit();raise HTTPException(503,task.error)
+ audit(s,u,'发起证据对账任务 '+str(task.id));return dump(task)
+@router.get('/reconciliations')
+def list_reconciliations(u=Depends(current),s=Depends(db)):
+ return [dump(t) for t in s.query(ReconciliationTask).order_by(ReconciliationTask.id.desc()).limit(50).all()]
+@router.get('/reconciliations/{i}')
+def reconciliation_detail(i:int,u=Depends(current),s=Depends(db)):
+ t=s.get(ReconciliationTask,i)
+ if not t:raise HTTPException(404,'对账任务不存在')
+ return dump(t)
 @router.get('/audits')
 def audits(u=Depends(admin),s=Depends(db)):return [dump(r) for r in s.query(Audit).order_by(Audit.id.desc()).limit(100)]

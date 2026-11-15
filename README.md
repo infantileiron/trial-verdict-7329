@@ -12,6 +12,7 @@
 2. **事件核对**：曝光/激活，按实验+用户+类型去重，禁止同用户跨组、未来事件、超观察期及先激活后曝光。
 3. **实验裁决**：Redis队列由Python worker真算比例z检验、SRM卡方、绝对提升及95%区间，保留协议与全部输入快照。
 4. **发布记录**：分析员填写业务理由，管理员签核上线B或保留A。未到期、SRM异常、小样本禁止发布；上线B还需正向显著提升。已发布裁决不可覆盖。
+5. **证据对账与修复**：对冻结输入快照校验和、库内原裁决结果与 `/artifacts` 留存文件三方对账，区分完整、文件缺失、内容不符、冻结校验不符（不可修复）以及无所属裁决的孤立文件。仅对缺失/内容不符项依据库内原裁决结果原子恢复，不读取新增事件、不重新检验；损坏原件移入 `/artifacts/quarantine/` 保留供追查。任务状态 queued→running→done/failed 全程可查，失败后重试不重复生成已完整证据。下载只回传核验通过的留存原字节并附 SHA256 头，来源无法确认时拒绝并说明原因。
 
 | 角色 | 页面 | 权限与动作 |
 |---|---|---|
@@ -70,7 +71,15 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 共享枚举：后端 `backend/src/constants/enums.py`，前端 `frontend/src/constants/enums.js`，含角色admin/analyst/viewer、组别A/B、事件exposure/activation、任务queued/running/done/failed、裁决publish_b/keep_a；schema的Literal校验和页面选择器使用同组值。
 
-本地开发：后端安装 `backend/requirements.lock`（完整固定版本），设置DATABASE_URL、REDIS_URL、JWT_SECRET后在backend运行`uvicorn src.main:app --reload --port 8000`；另开`python -m src.worker`。前端可用本项目Nginx容器代理该后端，所有请求统一`/api/`剥前缀。常用API为 `/auth/login`、`/experiments`、`/events`、`/decisions`、`/decisions/{id}/rationale`、`/decisions/{id}/publish`、`/decisions/{id}/export`。
+本地开发：后端安装 `backend/requirements.lock`（完整固定版本），设置DATABASE_URL、REDIS_URL、JWT_SECRET后在backend运行`uvicorn src.main:app --reload --port 8000`；另开`python -m src.worker`。前端可用本项目Nginx容器代理该后端，所有请求统一`/api/`剥前缀。常用API为 `/auth/login`、`/experiments`、`/events`、`/decisions`、`/decisions/{id}/rationale`、`/decisions/{id}/publish`、`/decisions/{id}/export`、`/reconciliations`。
+
+## 证据对账口径
+
+- 留存文件固定为 `ARTIFACT_DIR`（默认 `/artifacts`）下 `trial-verdict-<裁决id>.json`，字节口径与 worker 首次落盘一致（`json.dumps(result, ensure_ascii=False)`），修复使用同目录临时文件 `os.replace` 原子替换，并以 `flock` 串行化写操作，读者不会读到半成品。
+- 三道核验：`result.checksum` 必须等于冻结快照的 SHA256（证明结果确属当时冻结输入）；文件必须存在；文件字节必须与库内 `result` 重新序列化结果一致。任一不通过则拒绝下载，HTTP 返回 409 与具体原因，响应头 `X-Evidence-SHA256` 供下载方复核。
+- 修复来源仅限库内 `decisions.result`（原裁决产物），不调用 `calculate`、不查询事件表；快照校验不符的裁决标记为不可修复，只能人工追查。
+- 对账任务表 `reconciliation_tasks` 记录发起人、状态、错误与 JSON 报告（逐项原始差异、修复后状态、动作、隔离文件名、孤立文件清单）。worker 启动时回收 queued/running 任务，重试先核验后写入，已完整证据不重复生成；审计表记录每次任务结果。
+- 无所属裁决或所属裁决未完成的文件只列入报告、不自动删除或修复；已发布裁决的 `action/published_*` 与结果校验和在对账前后保持不变。
 
 环境变量见`.env.example`：COMPOSE_PROJECT_NAME、三宿主端口、DB_PASSWORD、JWT_SECRET、SEED_DEMO、NETWORK_SUBNET；内部DATABASE_URL与REDIS_URL由Compose设置。默认显式子网10.253.104.0/24用于避开本机地址池耗尽，迁移时可修改。5服务都有健康检查，MySQL通过TCP SELECT1验证应用用户，worker用20秒心跳；后端健康检查同时查数据库和Redis。审计记录操作者/动作/UTC时间；请求ID、安全响应头与全局错误恢复构成横切处理。
 

@@ -13,6 +13,9 @@ class Event(Base):
 class Decision(Base):
  __tablename__='decisions'
  id=Column(Integer,primary_key=True);experiment_id=Column(Integer,ForeignKey('experiments.id'));state=Column(String(20),default='queued');snapshot=Column(JSON);result=Column(JSON,nullable=True);error=Column(Text,default='');rationale=Column(Text,default='');action=Column(String(30),default='');published_by=Column(String(100),default='');published_at=Column(String(40),default='')
+class ReconciliationTask(Base):
+ __tablename__='reconciliation_tasks'
+ id=Column(Integer,primary_key=True);state=Column(String(20),default='queued');report=Column(JSON,nullable=True);error=Column(Text,default='');created_by=Column(String(100),default='');created_at=Column(String(40),default='');started_at=Column(String(40),default='');finished_at=Column(String(40),default='')
 class Audit(Base):
  __tablename__='audits'
  id=Column(Integer,primary_key=True);actor=Column(String(100));action=Column(String(200));created=Column(String(40))

@@ -2,6 +2,8 @@ import math,hashlib,json
 from datetime import datetime,timezone
 from scipy.stats import norm,chi2
 VERSION='two-proportion-srm-1.0'
+def snapshot_checksum(snapshot):
+ return hashlib.sha256(json.dumps(snapshot,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 def calculate(snapshot):
  exp=snapshot['experiment'];events=snapshot['events']
  exposed={g:{e['user_key'] for e in events if e['group']==g and e['kind']=='exposure'} for g in ('A','B')}
@@ -20,4 +22,4 @@ def calculate(snapshot):
  if not matured:reasons.append('实验未到预定结束时间，禁止提前发布')
  if srm_p<.01:reasons.append('SRM p<0.01，先排查随机分流与事件采集')
  if not approximate:reasons.append('每组至少20人且成功/失败各至少5人，当前不满足正态近似')
- return dict(n_a=n0,n_b=n1,activated_a=c0,activated_b=c1,rate_a=p0,rate_b=p1,difference=delta,relative_lift=delta/p0 if p0 else None,z=z,p_value=pv,ci_low=max(-1,delta-margin),ci_high=min(1,delta+margin),srm_chi2=srm,srm_p=srm_p,expected_a=expected[0],expected_b=expected[1],matured=matured,approximation_valid=approximate,release_eligible=not reasons,block_reasons=reasons,significant_positive=delta>0 and pv<.05,version=VERSION,checksum=hashlib.sha256(json.dumps(snapshot,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),method='双侧双比例z检验；95%绝对提升Wald区间；SRM卡方df=1；曝光用户去重，激活为曝光子集；差异方向B−A')
+ return dict(n_a=n0,n_b=n1,activated_a=c0,activated_b=c1,rate_a=p0,rate_b=p1,difference=delta,relative_lift=delta/p0 if p0 else None,z=z,p_value=pv,ci_low=max(-1,delta-margin),ci_high=min(1,delta+margin),srm_chi2=srm,srm_p=srm_p,expected_a=expected[0],expected_b=expected[1],matured=matured,approximation_valid=approximate,release_eligible=not reasons,block_reasons=reasons,significant_positive=delta>0 and pv<.05,version=VERSION,checksum=snapshot_checksum(snapshot),method='双侧双比例z检验；95%绝对提升Wald区间；SRM卡方df=1；曝光用户去重，激活为曝光子集；差异方向B−A')

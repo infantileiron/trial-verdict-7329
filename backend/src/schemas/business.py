@@ -24,3 +24,5 @@ class RationaleInput(BaseModel):
  rationale:str=Field(min_length=10,max_length=3000)
 class PublishInput(BaseModel):
  action:Literal['publish_b','keep_a']
+class ReconciliationInput(BaseModel):
+ confirm:bool=True
